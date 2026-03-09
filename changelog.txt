@@ -1,0 +1,7 @@
+v1.0.0
+- Initial release
+- Search fanedit.org via the Google Custom Search API
+- Scrape fanedit detail pages for title, plot, poster, editor, runtime, year, genres and rating
+- Configurable Google API Key and Custom Search Engine ID in addon settings
+- Maximum search results setting (1–10, default 10)
+- NFO URL extraction support
