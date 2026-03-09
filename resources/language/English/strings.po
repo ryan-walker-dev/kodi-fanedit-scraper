@@ -1,0 +1,52 @@
+# Kodi Media Center language file
+# Addon Name: Fanedit.org Scraper
+# Addon id: metadata.fanedit.org
+# Addon Provider: ryan-walker-dev
+msgid ""
+msgstr ""
+
+# ----- Settings categories / groups -----
+
+msgctxt "#32000"
+msgid "General"
+msgstr ""
+
+msgctxt "#32010"
+msgid "Google Custom Search API"
+msgstr ""
+
+msgctxt "#32011"
+msgid "Search options"
+msgstr ""
+
+# ----- Settings labels -----
+
+msgctxt "#32001"
+msgid "Google API Key"
+msgstr ""
+
+msgctxt "#32002"
+msgid "Custom Search Engine ID (cx)"
+msgstr ""
+
+msgctxt "#32003"
+msgid "Maximum search results"
+msgstr ""
+
+# ----- Notification / error strings -----
+
+msgctxt "#32100"
+msgid "Fanedit.org Scraper"
+msgstr ""
+
+msgctxt "#32101"
+msgid "Google API key or Search Engine ID not set. Please configure them in the addon settings."
+msgstr ""
+
+msgctxt "#32102"
+msgid "Search failed. Check your API key and internet connection."
+msgstr ""
+
+msgctxt "#32103"
+msgid "Could not fetch page details. Please try again later."
+msgstr ""
