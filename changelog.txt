@@ -1,3 +1,8 @@
+v1.0.1
+- Fix settings page not appearing in Kodi 19+ (Matrix/Nexus/Omega)
+- Corrected the settings attribute in addon.xml from a file path to the required boolean value "true"
+- Added version="1" to resources/settings.xml required by the Kodi 19+ settings format
+
 v1.0.0
 - Initial release
 - Search fanedit.org via the Google Custom Search API
