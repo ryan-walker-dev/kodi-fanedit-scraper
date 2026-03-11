@@ -5,7 +5,7 @@
   </requires>
 
   <!-- Movie metadata scraper extension point -->
-  <extension point="xbmc.metadata.scraper.movies" library="default.py">
+  <extension point="xbmc.metadata.scraper.movies" library="default.py" settings="resources/settings.xml">
     <provides>movies</provides>
   </extension>
 
