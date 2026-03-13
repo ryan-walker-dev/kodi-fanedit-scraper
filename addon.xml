@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="metadata.fanedit.org" name="Fanedit.org Scraper" version="1.0.1" provider-name="ryan-walker-dev">
+<addon id="metadata.fanedit.org" name="Fanedit.org Scraper" version="1.0.2" provider-name="ryan-walker-dev">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
   </requires>
@@ -13,7 +13,7 @@
   <extension point="xbmc.addon.metadata">
     <summary lang="en_GB">Fanedit.org movie scraper</summary>
     <description lang="en_GB">Scrapes fanedit.org for fan-edit movie details. Uses the Google Custom Search API to find titles; configure your API key and Custom Search Engine ID in the addon settings.</description>
-    <news>1.0.1 - Fix settings page not appearing: correct settings attribute to boolean true and add version to settings.xml</news>
+    <news>1.0.2 - Add user-facing API error notifications; add getartwork action support</news>
     <platform>all</platform>
     <license>MIT</license>
     <website>https://www.fanedit.org</website>

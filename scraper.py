@@ -127,6 +127,12 @@ class FaneditScraper:
                 "Please set them in the addon settings.",
                 _LOG_ERROR,
             )
+            xbmcgui.Dialog().notification(
+                heading="Fanedit.org Scraper",
+                message="Google API key or Search Engine ID not set. Check addon settings.",
+                icon=xbmcgui.NOTIFICATION_ERROR,
+                time=5000,
+            )
             xbmcplugin.endOfDirectory(handle, succeeded=False)
             return
 
@@ -155,11 +161,34 @@ class FaneditScraper:
             with urllib.request.urlopen(req, timeout=30) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            _log(f"Google API HTTP error {exc.code}: {exc.reason}", _LOG_ERROR)
+            body_detail = ""
+            try:
+                raw_body = exc.read().decode("utf-8", errors="replace")
+                err_json = json.loads(raw_body)
+                body_detail = err_json.get("error", {}).get("message", "")
+                if body_detail:
+                    _log(f"Google API error body: {body_detail}", _LOG_ERROR)
+            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+                pass
+            msg = f"Google API error {exc.code}: {exc.reason}"
+            _log(msg, _LOG_ERROR)
+            xbmcgui.Dialog().notification(
+                heading="Fanedit.org Scraper",
+                message=msg,
+                icon=xbmcgui.NOTIFICATION_ERROR,
+                time=5000,
+            )
             xbmcplugin.endOfDirectory(handle, succeeded=False)
             return
         except urllib.error.URLError as exc:
-            _log(f"Google API request failed: {exc.reason}", _LOG_ERROR)
+            msg = f"Google API connection failed: {exc.reason}"
+            _log(msg, _LOG_ERROR)
+            xbmcgui.Dialog().notification(
+                heading="Fanedit.org Scraper",
+                message=msg,
+                icon=xbmcgui.NOTIFICATION_ERROR,
+                time=5000,
+            )
             xbmcplugin.endOfDirectory(handle, succeeded=False)
             return
 
@@ -256,6 +285,47 @@ class FaneditScraper:
             art["fanart"] = details["fanart"]
         if art:
             list_item.setArt(art)
+
+        xbmcplugin.setResolvedUrl(handle, True, list_item)
+
+    def get_artwork(self, handle: int, fanedit_id: str) -> None:
+        """
+        Fetch available artwork for the fanedit identified by *fanedit_id*
+        (the URL slug stored as the default unique ID by ``get_details``).
+        """
+        if not fanedit_id:
+            _log("get_artwork called with no ID", _LOG_ERROR)
+            xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
+            return
+
+        url = f"{FANEDIT_BASE_URL}/{fanedit_id}/"
+        _log(f"Fetching artwork from: {url}")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+            with urllib.request.urlopen(req, timeout=30) as response:
+                html = response.read().decode("utf-8", errors="replace")
+        except urllib.error.URLError as exc:
+            _log(f"Failed to fetch artwork for {fanedit_id!r}: {exc}", _LOG_ERROR)
+            xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
+            return
+
+        details = self._parse_fanedit_page(html, url)
+
+        list_item = xbmcgui.ListItem(details.get("title", ""), offscreen=True)
+        tags = list_item.getVideoInfoTag()
+
+        poster = details.get("poster", "")
+        if poster:
+            tags.addAvailableArtwork(poster, "poster")
+
+        fanart_list = []
+        if details.get("fanart"):
+            fanart_list.append({"image": details["fanart"], "preview": details["fanart"]})
+        elif poster:
+            # Fall back to poster when no dedicated fanart image is available
+            fanart_list.append({"image": poster, "preview": poster})
+        if fanart_list:
+            list_item.setAvailableFanart(fanart_list)
 
         xbmcplugin.setResolvedUrl(handle, True, list_item)
 
