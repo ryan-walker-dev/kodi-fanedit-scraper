@@ -5,10 +5,8 @@ A Kodi 21 (Omega) metadata scraper that looks up fan-edit movies on
 plot, poster, editor, runtime, year, genres, rating) directly into your Kodi
 library.
 
-Because fanedit.org's own search can be unreliable, this scraper uses the
-**Google Custom Search API** to find the correct fanedit page.  You will need
-a free Google API key and a Custom Search Engine (CSE) scoped to
-`fanedit.org`.
+The scraper queries **fanedit.org's own native search** directly — no API key
+or external service is required.
 
 ---
 
@@ -18,7 +16,6 @@ a free Google API key and a Custom Search Engine (CSE) scoped to
 |-----------|---------|
 | Kodi | 21 (Omega) or newer |
 | Python | 3.x (bundled with Kodi 21) |
-| Google Custom Search API | Free tier (100 queries/day) or paid |
 
 ---
 
@@ -35,40 +32,13 @@ a free Google API key and a Custom Search Engine (CSE) scoped to
 
 ## Configuration
 
-Before the scraper can search for titles you must supply a Google API key and
-a Custom Search Engine ID.
-
-### 1 – Create a Google API key
-
-1. Open [Google Cloud Console](https://console.cloud.google.com/).
-2. Create (or select) a project.
-3. Navigate to **APIs & Services → Enable APIs** and enable the
-   **Custom Search API**.
-4. Go to **APIs & Services → Credentials → Create Credentials →
-   API key** and copy the key.
-
-> The free tier allows **100 search queries per day**.  Paid usage is
-> available if you need more.  See the
-> [API overview](https://developers.google.com/custom-search/v1/overview)
-> for pricing details.
-
-### 2 – Create a Custom Search Engine
-
-1. Open [Programmable Search Engine](https://programmablesearchengine.google.com/).
-2. Click **Add** and set the site to search to `fanedit.org`.
-3. Give the engine a name (e.g. *Fanedit.org*) and click **Create**.
-4. Open the engine's **Setup** page and copy the **Search engine ID** (cx).
-
-### 3 – Enter the credentials in Kodi
+No API key or external account is required.
 
 1. In Kodi go to **Add-ons → My add-ons → Information providers →
    Movies** and open **Fanedit.org Scraper**.
 2. Click **Configure** (or **Settings**).
-3. Fill in:
-   - **Google API Key** – the key from step 1.
-   - **Custom Search Engine ID (cx)** – the cx value from step 2.
-4. Optionally change **Maximum search results** (1–10, default 10).
-5. Click **OK**.
+3. Optionally change **Maximum search results** (1–10, default 10).
+4. Click **OK**.
 
 ---
 

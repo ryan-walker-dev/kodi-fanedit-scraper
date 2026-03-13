@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="metadata.fanedit.org" name="Fanedit.org Scraper" version="1.0.4" provider-name="ryan-walker-dev">
+<addon id="metadata.fanedit.org" name="Fanedit.org Scraper" version="1.0.5" provider-name="ryan-walker-dev">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
   </requires>
@@ -13,7 +13,7 @@
   <extension point="xbmc.addon.metadata">
     <summary lang="en_GB">Fanedit.org movie scraper</summary>
     <description lang="en_GB">Scrapes fanedit.org for fan-edit movie details. Searches fanedit.org directly — no API key or external service configuration required.</description>
-    <news>1.0.4 - Replace Google Custom Search API with direct fanedit.org search; interactive result selection when multiple matches found</news>
+    <news>1.0.5 - Fix search results parser to handle JReviews listing format (data-listingurl/data-listingtitle/data-thumburl attributes)</news>
     <platform>all</platform>
     <license>MIT</license>
     <website>https://www.fanedit.org</website>

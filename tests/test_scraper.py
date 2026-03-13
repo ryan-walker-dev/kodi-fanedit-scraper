@@ -708,6 +708,78 @@ class TestParseSearchResults(unittest.TestCase):
         # Confirm _is_fanedit_detail_page would correctly reject it
         self.assertFalse(FaneditScraper._is_fanedit_detail_page(results[0][0]))
 
+    # ------------------------------------------------------------------
+    # JReviews listing format (current fanedit.org search results layout)
+    # ------------------------------------------------------------------
+
+    # Minimal JReviews listing block mirroring the real fanedit.org HTML.
+    _JREVIEWS_SINGLE = """<html><body>
+\t\t\t\t\t\t<a href="https://fanedit.org/cosmogony/"><img></a>
+\t\t\t\t\t\t<a href="https://fanedit.org/cosmogony/">Cosmogony</a>
+\t\t\t\t\t\tFanMix
+\t\t\t\t\t\tFaneditor Name:<ul><li><a href="/fanedit-search/tag/faneditorname/tmbtm/?criteria=2">The Man Behind The Mask</a></li></ul>Fanedit Type:<a href="/fanedit-search/tag/fanedittype/fanmix/?criteria=2">FanMix</a>Fanedit Running Time:122 minutesSynopsis:Cosmogony is a fanedit about humanity and nature.
+\t\t\t\t\t\t<input id="listing886" data-location=""
+                data-listingurl="https://fanedit.org/cosmogony/" data-thumburl="https://ifdbphoto.example.com/Cosmogony-front.jpg"
+                data-listingtitle="Cosmogony" data-listingid="listing886"
+                data-listingtypeid="2" data-listingtypetitle="Fanedit Details"
+                value="886" />
+\t\t\t\t\t\t<a href="https://fanedit.org/cosmogony/">Read more</a>
+</body></html>"""
+
+    _JREVIEWS_TWO = """<html><body>
+\t\t\t\t\t\t<a href="https://fanedit.org/edit-a/">Edit A</a>
+\t\t\t\t\t\tSynopsis:First edit synopsis.
+\t\t\t\t\t\t<input id="listing1"
+                data-listingurl="https://fanedit.org/edit-a/" data-thumburl="https://example.com/thumb-a.jpg"
+                data-listingtitle="Edit A" data-listingid="listing1" value="1" />
+\t\t\t\t\t\t<a href="https://fanedit.org/edit-b/">Edit B</a>
+\t\t\t\t\t\tSynopsis:Second edit synopsis.
+\t\t\t\t\t\t<input id="listing2"
+                data-listingurl="https://fanedit.org/edit-b/" data-thumburl="https://example.com/thumb-b.jpg"
+                data-listingtitle="Edit B" data-listingid="listing2" value="2" />
+</body></html>"""
+
+    def test_parses_jreviews_listing_input(self):
+        """Primary strategy extracts URL and title from data-* attributes."""
+        results = FaneditScraper._parse_search_results(self._JREVIEWS_SINGLE)
+        self.assertEqual(len(results), 1)
+        url, title, thumbnail, snippet = results[0]
+        self.assertEqual(url, "https://fanedit.org/cosmogony/")
+        self.assertEqual(title, "Cosmogony")
+
+    def test_jreviews_extracts_thumbnail_from_data_thumburl(self):
+        """Thumbnail is taken from the data-thumburl attribute."""
+        results = FaneditScraper._parse_search_results(self._JREVIEWS_SINGLE)
+        _, _, thumbnail, _ = results[0]
+        self.assertEqual(thumbnail, "https://ifdbphoto.example.com/Cosmogony-front.jpg")
+
+    def test_jreviews_extracts_synopsis_as_snippet(self):
+        """Snippet is extracted from the inline 'Synopsis:' field."""
+        results = FaneditScraper._parse_search_results(self._JREVIEWS_SINGLE)
+        _, _, _, snippet = results[0]
+        self.assertIn("humanity", snippet)
+
+    def test_jreviews_multiple_listings(self):
+        """All JReviews listing inputs are parsed into separate results."""
+        results = FaneditScraper._parse_search_results(self._JREVIEWS_TWO)
+        self.assertEqual(len(results), 2)
+        urls = [r[0] for r in results]
+        self.assertIn("https://fanedit.org/edit-a/", urls)
+        self.assertIn("https://fanedit.org/edit-b/", urls)
+
+    def test_jreviews_preferred_over_article_strategy(self):
+        """When data-listingurl inputs are present, article strategy is skipped."""
+        html = self._JREVIEWS_SINGLE + """
+<article>
+  <h2><a href="https://www.fanedit.org/article-edit/">Article Edit</a></h2>
+</article>"""
+        results = FaneditScraper._parse_search_results(html)
+        urls = [r[0] for r in results]
+        # JReviews result is present
+        self.assertIn("https://fanedit.org/cosmogony/", urls)
+        # Article-strategy result is NOT present (JReviews took priority)
+        self.assertNotIn("https://www.fanedit.org/article-edit/", urls)
+
 
 # ---------------------------------------------------------------------------
 # Tests for get_artwork
