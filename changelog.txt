@@ -1,3 +1,6 @@
+v1.0.3
+- Remove site:fanedit.org prefix from search query string; site restriction should be configured in the Programmable Search Engine console, not the query parameter
+
 v1.0.2
 - Add user-facing notification when Google API key/CX is missing or API call fails
 - Add getartwork action to support artwork fetching by unique ID
