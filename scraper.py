@@ -136,7 +136,7 @@ class FaneditScraper:
             xbmcplugin.endOfDirectory(handle, succeeded=False)
             return
 
-        query = f"site:fanedit.org {title}"
+        query = title
         if year:
             query += f" {year}"
 
