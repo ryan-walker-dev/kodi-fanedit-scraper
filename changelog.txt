@@ -1,3 +1,9 @@
+v1.0.5
+- Fix search results parser to handle current fanedit.org JReviews listing format
+- Results are now parsed from data-listingurl / data-listingtitle / data-thumburl attributes on hidden <input> elements
+- Synopsis extracted from inline "Synopsis:" field preceding each listing input
+- Keep <article> element parsing as a secondary fallback for older layouts
+
 v1.0.4
 - Replace Google Custom Search API with direct fanedit.org native search endpoint
 - No API key or external service configuration required
