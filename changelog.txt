@@ -1,3 +1,9 @@
+v1.0.4
+- Replace Google Custom Search API with direct fanedit.org native search endpoint
+- No API key or external service configuration required
+- When multiple search results are returned, prompt the user to select the correct one via a dialog
+- Remove google_api_key and google_cx addon settings
+
 v1.0.3
 - Remove site:fanedit.org prefix from search query string; site restriction should be configured in the Programmable Search Engine console, not the query parameter
 

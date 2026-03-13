@@ -30,7 +30,46 @@ _xbmc.log = lambda *a, **kw: None
 
 
 class _StubVideoInfoTag:
+    def __init__(self):
+        self._title = ""
+
     def addAvailableArtwork(self, *a, **kw):
+        pass
+
+    def setTitle(self, title):
+        self._title = title
+
+    def getTitle(self):
+        return self._title
+
+    def setYear(self, *a, **kw):
+        pass
+
+    def setPlot(self, *a, **kw):
+        pass
+
+    def setOriginalTitle(self, *a, **kw):
+        pass
+
+    def setTagLine(self, *a, **kw):
+        pass
+
+    def setDuration(self, *a, **kw):
+        pass
+
+    def setDirectors(self, *a, **kw):
+        pass
+
+    def setWriters(self, *a, **kw):
+        pass
+
+    def setGenres(self, *a, **kw):
+        pass
+
+    def setRating(self, *a, **kw):
+        pass
+
+    def setUniqueID(self, *a, **kw):
         pass
 
 
@@ -56,15 +95,20 @@ class _StubListItem:
 class _StubDialog:
     def __init__(self):
         self.last_notification = None
+        self.select_return = 0  # default: selects the first item
 
     def notification(self, heading="", message="", icon=None, time=3000):
         self.last_notification = {"heading": heading, "message": message, "icon": icon}
+
+    def select(self, heading="", options=None):
+        return self.select_return
 
 
 _shared_dialog = _StubDialog()
 
 _xbmcgui = _make_stub("xbmcgui")
 _xbmcgui.NOTIFICATION_ERROR = "error"
+_xbmcgui.NOTIFICATION_WARNING = "warning"
 _xbmcgui.ListItem = _StubListItem
 _xbmcgui.Dialog = lambda: _shared_dialog
 
@@ -451,15 +495,39 @@ class TestParseFaneditPage(unittest.TestCase):
 # Helpers shared by integration-style tests
 # ---------------------------------------------------------------------------
 
-def _make_addon(api_key="test-key", cx="test-cx", max_results="10"):
+def _make_addon(max_results="10"):
     """Return a minimal addon stub with preset settings."""
     addon = unittest.mock.MagicMock()
     addon.getSetting.side_effect = lambda key: {
-        "google_api_key": api_key,
-        "google_cx": cx,
         "max_results": max_results,
     }.get(key, "")
     return addon
+
+
+# Minimal HTML search results pages used by find_movie tests.
+_SEARCH_HTML_ONE_RESULT = """<!DOCTYPE html>
+<html><body>
+<article>
+  <h2><a href="https://www.fanedit.org/star-wars-de-specialized/">Star Wars: De-Specialized Edition</a></h2>
+  <img src="https://example.com/thumb.jpg">
+  <p>A restoration of the original trilogy.</p>
+</article>
+</body></html>"""
+
+_SEARCH_HTML_TWO_RESULTS = """<!DOCTYPE html>
+<html><body>
+<article>
+  <h2><a href="https://www.fanedit.org/star-wars-a/">Star Wars: Edit A</a></h2>
+  <p>First edit.</p>
+</article>
+<article>
+  <h2><a href="https://www.fanedit.org/star-wars-b/">Star Wars: Edit B</a></h2>
+  <p>Second edit.</p>
+</article>
+</body></html>"""
+
+_SEARCH_HTML_NO_RESULTS = """<!DOCTYPE html>
+<html><body><p>No results found.</p></body></html>"""
 
 
 # ---------------------------------------------------------------------------
@@ -467,35 +535,30 @@ def _make_addon(api_key="test-key", cx="test-cx", max_results="10"):
 # ---------------------------------------------------------------------------
 
 class TestFindMovieNotifications(unittest.TestCase):
-    """Verify that user-facing notifications are shown on API error paths."""
+    """Verify that user-facing notifications are shown on error/no-result paths."""
 
     def setUp(self):
         # Reset the shared dialog state before each test
         _shared_dialog.last_notification = None
+        _shared_dialog.select_return = 0
 
-    def test_missing_api_key_shows_notification(self):
-        scraper = FaneditScraper(_make_addon(api_key="", cx="test-cx"))
-        scraper.find_movie(handle=1, title="Star Wars")
-        self.assertIsNotNone(_shared_dialog.last_notification)
-        self.assertIn("not set", _shared_dialog.last_notification["message"])
-
-    def test_missing_cx_shows_notification(self):
-        scraper = FaneditScraper(_make_addon(api_key="test-key", cx=""))
-        scraper.find_movie(handle=1, title="Star Wars")
-        self.assertIsNotNone(_shared_dialog.last_notification)
-        self.assertIn("not set", _shared_dialog.last_notification["message"])
+    def _fake_response(self, html):
+        resp = unittest.mock.MagicMock()
+        resp.read.return_value = html.encode("utf-8")
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = unittest.mock.MagicMock(return_value=False)
+        return resp
 
     def test_http_error_shows_notification(self):
         scraper = FaneditScraper(_make_addon())
         http_exc = urllib.error.HTTPError(
-            url="https://example.com", code=403, msg="Forbidden",
-            hdrs=None, fp=io.BytesIO(b'{"error": {"message": "API key invalid"}}'),
+            url="https://fanedit.org", code=503, msg="Service Unavailable",
+            hdrs=None, fp=io.BytesIO(b""),
         )
         with unittest.mock.patch("urllib.request.urlopen", side_effect=http_exc):
             scraper.find_movie(handle=1, title="Star Wars")
         self.assertIsNotNone(_shared_dialog.last_notification)
-        msg = _shared_dialog.last_notification["message"]
-        self.assertIn("403", msg)
+        self.assertIn("503", _shared_dialog.last_notification["message"])
 
     def test_url_error_shows_notification(self):
         scraper = FaneditScraper(_make_addon())
@@ -503,13 +566,147 @@ class TestFindMovieNotifications(unittest.TestCase):
         with unittest.mock.patch("urllib.request.urlopen", side_effect=url_exc):
             scraper.find_movie(handle=1, title="Star Wars")
         self.assertIsNotNone(_shared_dialog.last_notification)
-        msg = _shared_dialog.last_notification["message"]
-        self.assertIn("connection failed", msg.lower())
+        self.assertIn("connection failed", _shared_dialog.last_notification["message"].lower())
 
-    def test_notification_icon_is_error(self):
-        scraper = FaneditScraper(_make_addon(api_key="", cx=""))
-        scraper.find_movie(handle=1, title="Test")
+    def test_notification_icon_is_error_on_http_failure(self):
+        scraper = FaneditScraper(_make_addon())
+        http_exc = urllib.error.HTTPError(
+            url="https://fanedit.org", code=403, msg="Forbidden",
+            hdrs=None, fp=io.BytesIO(b""),
+        )
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=http_exc):
+            scraper.find_movie(handle=1, title="Test")
         self.assertEqual(_shared_dialog.last_notification["icon"], _xbmcgui.NOTIFICATION_ERROR)
+
+    def test_no_results_shows_notification(self):
+        scraper = FaneditScraper(_make_addon())
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 return_value=self._fake_response(_SEARCH_HTML_NO_RESULTS)):
+            scraper.find_movie(handle=1, title="Star Wars")
+        self.assertIsNotNone(_shared_dialog.last_notification)
+
+    def test_single_result_calls_endOfDirectory_true(self):
+        scraper = FaneditScraper(_make_addon())
+        calls = []
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 return_value=self._fake_response(_SEARCH_HTML_ONE_RESULT)):
+            with unittest.mock.patch.object(
+                _xbmcplugin, "endOfDirectory",
+                side_effect=lambda h, succeeded: calls.append(succeeded),
+            ):
+                scraper.find_movie(handle=1, title="Star Wars")
+        self.assertIn(True, calls)
+
+    def test_multiple_results_dialog_cancel_ends_with_false(self):
+        scraper = FaneditScraper(_make_addon())
+        _shared_dialog.select_return = -1  # simulate user cancelling the dialog
+        calls = []
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 return_value=self._fake_response(_SEARCH_HTML_TWO_RESULTS)):
+            with unittest.mock.patch.object(
+                _xbmcplugin, "endOfDirectory",
+                side_effect=lambda h, succeeded: calls.append(succeeded),
+            ):
+                scraper.find_movie(handle=1, title="Star Wars")
+        self.assertIn(False, calls)
+        self.assertNotIn(True, calls)
+
+    def test_multiple_results_dialog_selection_ends_with_true(self):
+        scraper = FaneditScraper(_make_addon())
+        _shared_dialog.select_return = 0  # select the first result
+        calls = []
+        with unittest.mock.patch("urllib.request.urlopen",
+                                 return_value=self._fake_response(_SEARCH_HTML_TWO_RESULTS)):
+            with unittest.mock.patch.object(
+                _xbmcplugin, "endOfDirectory",
+                side_effect=lambda h, succeeded: calls.append(succeeded),
+            ):
+                scraper.find_movie(handle=1, title="Star Wars")
+        self.assertIn(True, calls)
+
+
+# ---------------------------------------------------------------------------
+# Tests for FaneditScraper._parse_search_results
+# ---------------------------------------------------------------------------
+
+class TestParseSearchResults(unittest.TestCase):
+    """Test the HTML search results parser."""
+
+    def test_parses_single_article(self):
+        html = """<html><body>
+<article>
+  <h2><a href="https://www.fanedit.org/star-wars-edit/">Star Wars: The Edit</a></h2>
+  <img src="https://example.com/thumb.jpg">
+  <p>A great fan edit.</p>
+</article>
+</body></html>"""
+        results = FaneditScraper._parse_search_results(html)
+        self.assertEqual(len(results), 1)
+        url, title, thumbnail, snippet = results[0]
+        self.assertEqual(url, "https://www.fanedit.org/star-wars-edit/")
+        self.assertIn("Star Wars", title)
+        self.assertEqual(thumbnail, "https://example.com/thumb.jpg")
+        self.assertIn("fan edit", snippet)
+
+    def test_strips_site_suffix_from_title(self):
+        html = """<html><body>
+<article>
+  <h2><a href="https://www.fanedit.org/edit/">Some Edit | Fanedit.org</a></h2>
+</article>
+</body></html>"""
+        results = FaneditScraper._parse_search_results(html)
+        self.assertEqual(len(results), 1)
+        self.assertNotIn("Fanedit.org", results[0][1])
+
+    def test_empty_page_returns_empty_list(self):
+        results = FaneditScraper._parse_search_results(
+            "<html><body><p>Nothing here.</p></body></html>"
+        )
+        self.assertEqual(results, [])
+
+    def test_multiple_articles_returns_all(self):
+        html = """<html><body>
+<article><h2><a href="https://www.fanedit.org/edit-a/">Edit A</a></h2></article>
+<article><h2><a href="https://www.fanedit.org/edit-b/">Edit B</a></h2></article>
+</body></html>"""
+        results = FaneditScraper._parse_search_results(html)
+        self.assertEqual(len(results), 2)
+
+    def test_heading_title_preferred_over_link_text(self):
+        html = """<html><body>
+<article>
+  <h2>Heading Title</h2>
+  <a href="https://www.fanedit.org/some-edit/">Link Text</a>
+</article>
+</body></html>"""
+        results = FaneditScraper._parse_search_results(html)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][1], "Heading Title")
+        self.assertEqual(results[0][0], "https://www.fanedit.org/some-edit/")
+
+    def test_skips_relative_links(self):
+        html = """<html><body>
+<article>
+  <h2><a href="/relative/path/">Relative Link Edit</a></h2>
+</article>
+</body></html>"""
+        results = FaneditScraper._parse_search_results(html)
+        self.assertEqual(results, [])
+
+    def test_non_fanedit_absolute_url_is_included_but_filterable(self):
+        """_parse_search_results returns all absolute http URLs; callers use
+        _is_fanedit_detail_page to filter out non-fanedit results."""
+        html = """<html><body>
+<article>
+  <h2><a href="https://www.example.com/some-edit/">External Edit</a></h2>
+</article>
+</body></html>"""
+        results = FaneditScraper._parse_search_results(html)
+        # The parser accepts it; it is the caller's responsibility to filter
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][0], "https://www.example.com/some-edit/")
+        # Confirm _is_fanedit_detail_page would correctly reject it
+        self.assertFalse(FaneditScraper._is_fanedit_detail_page(results[0][0]))
 
 
 # ---------------------------------------------------------------------------

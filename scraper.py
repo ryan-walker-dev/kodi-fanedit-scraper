@@ -5,7 +5,7 @@ Search flow
 -----------
 1. User triggers a library scan / manual info search in Kodi.
 2. Kodi calls ``find_movie`` with the title (and optional year).
-3. This module queries the Google Custom Search API restricted to fanedit.org.
+3. This module queries the fanedit.org native search endpoint directly.
 4. Matching fanedit.org pages are returned as Kodi ListItems so the user
    can select the correct entry.
 5. Kodi calls ``get_details`` with the chosen URL.
@@ -13,7 +13,6 @@ Search flow
    a Kodi ListItem.
 """
 
-import json
 import re
 import urllib.error
 import urllib.parse
@@ -28,8 +27,8 @@ import xbmcplugin
 # ---------------------------------------------------------------------------
 
 ADDON_ID = "metadata.fanedit.org"
-GOOGLE_SEARCH_ENDPOINT = "https://www.googleapis.com/customsearch/v1"
 FANEDIT_BASE_URL = "https://www.fanedit.org"
+FANEDIT_SEARCH_URL = "https://fanedit.org/fanedit-search/search-results/"
 
 # Kodi log-level aliases (kept explicit for readability)
 _LOG_INFO = xbmc.LOGINFO
@@ -115,62 +114,35 @@ class FaneditScraper:
 
     def find_movie(self, handle: int, title: str, year: str = "") -> None:
         """
-        Search for *title* on fanedit.org using the Google Custom Search API
+        Search for *title* on fanedit.org using the native search endpoint
         and report matching ListItems to Kodi.
         """
-        api_key = self._addon.getSetting("google_api_key").strip()
-        cx = self._addon.getSetting("google_cx").strip()
-
-        if not api_key or not cx:
-            _log(
-                "Google API key or Custom Search Engine ID not configured. "
-                "Please set them in the addon settings.",
-                _LOG_ERROR,
-            )
-            xbmcgui.Dialog().notification(
-                heading="Fanedit.org Scraper",
-                message="Google API key or Search Engine ID not set. Check addon settings.",
-                icon=xbmcgui.NOTIFICATION_ERROR,
-                time=5000,
-            )
-            xbmcplugin.endOfDirectory(handle, succeeded=False)
-            return
+        try:
+            max_results = int(self._addon.getSetting("max_results") or "10")
+        except ValueError:
+            max_results = 10
+        max_results = max(1, max_results)
 
         query = title
         if year:
             query += f" {year}"
 
-        try:
-            max_results = int(self._addon.getSetting("max_results") or "10")
-        except ValueError:
-            max_results = 10
-        max_results = max(1, min(max_results, 10))  # Google CSE allows 1–10 per request
-
         params = {
-            "key": api_key,
-            "cx": cx,
-            "q": query,
-            "num": max_results,
+            "order": "rhits",
+            "scope": "title",
+            "query": "all",
+            "keywords": query,
         }
 
-        request_url = f"{GOOGLE_SEARCH_ENDPOINT}?{urllib.parse.urlencode(params)}"
-        _log(f"Searching: {query!r}")
+        request_url = f"{FANEDIT_SEARCH_URL}?{urllib.parse.urlencode(params)}"
+        _log(f"Searching fanedit.org: {query!r}")
 
         try:
             req = urllib.request.Request(request_url, headers={"User-Agent": _USER_AGENT})
             with urllib.request.urlopen(req, timeout=30) as response:
-                data = json.loads(response.read().decode("utf-8"))
+                html = response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
-            body_detail = ""
-            try:
-                raw_body = exc.read().decode("utf-8", errors="replace")
-                err_json = json.loads(raw_body)
-                body_detail = err_json.get("error", {}).get("message", "")
-                if body_detail:
-                    _log(f"Google API error body: {body_detail}", _LOG_ERROR)
-            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-                pass
-            msg = f"Google API error {exc.code}: {exc.reason}"
+            msg = f"Fanedit.org search error {exc.code}: {exc.reason}"
             _log(msg, _LOG_ERROR)
             xbmcgui.Dialog().notification(
                 heading="Fanedit.org Scraper",
@@ -181,7 +153,7 @@ class FaneditScraper:
             xbmcplugin.endOfDirectory(handle, succeeded=False)
             return
         except urllib.error.URLError as exc:
-            msg = f"Google API connection failed: {exc.reason}"
+            msg = f"Fanedit.org search connection failed: {exc.reason}"
             _log(msg, _LOG_ERROR)
             xbmcgui.Dialog().notification(
                 heading="Fanedit.org Scraper",
@@ -192,27 +164,36 @@ class FaneditScraper:
             xbmcplugin.endOfDirectory(handle, succeeded=False)
             return
 
+        # Parse and filter search results
+        candidates = self._parse_search_results(html)
+        filtered = [c for c in candidates if self._is_fanedit_detail_page(c[0])]
+        filtered = filtered[:max_results]
+
+        _log(f"Search returned {len(filtered)} usable result(s)")
+
+        if not filtered:
+            xbmcgui.Dialog().notification(
+                heading="Fanedit.org Scraper",
+                message=f"No results found for {title!r}",
+                icon=xbmcgui.NOTIFICATION_WARNING,
+                time=5000,
+            )
+            xbmcplugin.endOfDirectory(handle, succeeded=False)
+            return
+
+        # When more than one result is returned, let the user choose
+        if len(filtered) > 1:
+            dialog_titles = [c[1] for c in filtered]
+            chosen_idx = xbmcgui.Dialog().select("Select fanedit", dialog_titles)
+            if chosen_idx < 0:
+                xbmcplugin.endOfDirectory(handle, succeeded=False)
+                return
+            filtered = [filtered[chosen_idx]]
+
+        # Build and report ListItems for the chosen result
         results = []
-        for item in data.get("items", []):
-            link = item.get("link", "")
-            item_title = _clean_html(item.get("title", ""))
-            snippet = item.get("snippet", "")
-
-            if not self._is_fanedit_detail_page(link):
-                continue
-
+        for link, item_title, thumbnail, snippet in filtered:
             result_year = _extract_year(snippet) or _extract_year(item_title) or year
-
-            # Google sometimes returns the title as "Name | FanEdit.org" – strip the suffix.
-            item_title = re.sub(r"\s*[|\-–]\s*(?:fanedit\.org|fan\s*edit\.org).*$",
-                                "", item_title, flags=re.IGNORECASE).strip()
-
-            thumbnail = ""
-            pagemap = item.get("pagemap", {})
-            cse_images = pagemap.get("cse_image", [])
-            if cse_images:
-                thumbnail = cse_images[0].get("src", "")
-
             list_item = xbmcgui.ListItem(item_title, offscreen=True)
             tag = list_item.getVideoInfoTag()
             tag.setTitle(item_title)
@@ -221,10 +202,8 @@ class FaneditScraper:
             tag.setPlot(snippet)
             if thumbnail:
                 list_item.setArt({"thumb": thumbnail})
-
             results.append((link, list_item, True))
 
-        _log(f"Search returned {len(results)} usable result(s)")
         xbmcplugin.addDirectoryItems(handle, results)
         xbmcplugin.endOfDirectory(handle, succeeded=True)
 
@@ -351,6 +330,103 @@ class FaneditScraper:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_search_results(html: str) -> list:
+        """
+        Parse the fanedit.org search results page and return a list of
+        ``(url, title, thumbnail, snippet)`` tuples.
+
+        Supports the article-based WordPress layout as the primary strategy,
+        with a fallback that scans for result links inside list/div containers.
+        """
+        candidates = []
+
+        # Primary: WordPress article elements
+        articles = re.findall(
+            r'<article[^>]*>(.*?)</article>',
+            html, re.IGNORECASE | re.DOTALL,
+        )
+        for article in articles:
+            # Prefer a heading element for the display title
+            item_title = ""
+            h_match = re.search(
+                r'<h[1-6][^>]*>(.*?)</h[1-6]>',
+                article, re.IGNORECASE | re.DOTALL,
+            )
+            if h_match:
+                item_title = _clean_html(h_match.group(1))
+
+            # Find the primary hyperlink
+            link_match = re.search(
+                r'<a\s[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+                article, re.IGNORECASE | re.DOTALL,
+            )
+            if not link_match:
+                continue
+            link = link_match.group(1).strip()
+            if not link.startswith("http"):
+                continue
+            if not item_title:
+                item_title = _clean_html(link_match.group(2))
+
+            # Strip " | Fanedit.org" / " - Fanedit.org" suffixes
+            item_title = re.sub(
+                r"\s*[|\-–]\s*(?:fanedit\.org|fan\s*edit\.org).*$",
+                "", item_title, flags=re.IGNORECASE,
+            ).strip()
+
+            if not item_title or not link:
+                continue
+
+            # Thumbnail (first <img> in the article)
+            thumbnail = ""
+            img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', article, re.IGNORECASE)
+            if img_match:
+                thumbnail = img_match.group(1).strip()
+
+            # Snippet / excerpt
+            snippet = ""
+            p_match = re.search(r'<p[^>]*>(.*?)</p>', article, re.IGNORECASE | re.DOTALL)
+            if p_match:
+                snippet = _clean_html(p_match.group(1))
+
+            candidates.append((link, item_title, thumbnail, snippet))
+
+        # Fallback: result links in list/div containers
+        if not candidates:
+            for block_m in re.finditer(
+                r'<(?:li|div)[^>]+class="[^"]*(?:result|item|entry)[^"]*"[^>]*>(.*?)</(?:li|div)>',
+                html, re.IGNORECASE | re.DOTALL,
+            ):
+                block = block_m.group(1)
+                link_match = re.search(
+                    r'<a\s[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+                    block, re.IGNORECASE | re.DOTALL,
+                )
+                if not link_match:
+                    continue
+                link = link_match.group(1).strip()
+                if not link.startswith("http"):
+                    continue
+                item_title = _clean_html(link_match.group(2))
+                item_title = re.sub(
+                    r"\s*[|\-–]\s*(?:fanedit\.org|fan\s*edit\.org).*$",
+                    "", item_title, flags=re.IGNORECASE,
+                ).strip()
+                if not item_title or not link:
+                    continue
+                thumbnail = ""
+                img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', block, re.IGNORECASE)
+                if img_match:
+                    thumbnail = img_match.group(1).strip()
+                snippet = ""
+                p_match = re.search(r'<p[^>]*>(.*?)</p>', block, re.IGNORECASE | re.DOTALL)
+                if p_match:
+                    snippet = _clean_html(p_match.group(1))
+                candidates.append((link, item_title, thumbnail, snippet))
+
+        return candidates
 
     @staticmethod
     def _is_fanedit_detail_page(url: str) -> bool:
