@@ -6,9 +6,13 @@ xbmc* modules so the scraper module can be imported in a standard Python
 environment.
 """
 
+import io
+import json
 import sys
 import types
 import unittest
+import unittest.mock
+import urllib.error
 
 # ---------------------------------------------------------------------------
 # Stub out Kodi modules so scraper.py can be imported without Kodi.
@@ -24,9 +28,51 @@ _xbmc.LOGINFO = 0
 _xbmc.LOGERROR = 4
 _xbmc.log = lambda *a, **kw: None
 
+
+class _StubVideoInfoTag:
+    def addAvailableArtwork(self, *a, **kw):
+        pass
+
+
+class _StubListItem:
+    def __init__(self, *a, **kw):
+        self._art = {}
+        self._fanart = []
+        self._tag = _StubVideoInfoTag()
+
+    def getVideoInfoTag(self):
+        return self._tag
+
+    def setArt(self, art):
+        self._art = art
+
+    def setAvailableFanart(self, fanart_list):
+        self._fanart = fanart_list
+
+    def setProperty(self, *a, **kw):
+        pass
+
+
+class _StubDialog:
+    def __init__(self):
+        self.last_notification = None
+
+    def notification(self, heading="", message="", icon=None, time=3000):
+        self.last_notification = {"heading": heading, "message": message, "icon": icon}
+
+
+_shared_dialog = _StubDialog()
+
 _xbmcgui = _make_stub("xbmcgui")
+_xbmcgui.NOTIFICATION_ERROR = "error"
+_xbmcgui.ListItem = _StubListItem
+_xbmcgui.Dialog = lambda: _shared_dialog
 
 _xbmcplugin = _make_stub("xbmcplugin")
+_xbmcplugin.endOfDirectory = lambda *a, **kw: None
+_xbmcplugin.setResolvedUrl = lambda *a, **kw: None
+_xbmcplugin.addDirectoryItems = lambda *a, **kw: None
+_xbmcplugin.addDirectoryItem = lambda *a, **kw: None
 
 _xbmcaddon = _make_stub("xbmcaddon")
 
@@ -399,6 +445,137 @@ class TestParseFaneditPage(unittest.TestCase):
         html = "<html><head><title>Some Edit - Fanedit.org</title></head><body></body></html>"
         result = FaneditScraper._parse_fanedit_page(html, "https://www.fanedit.org/some-edit/")
         self.assertEqual(result.get("title"), "Some Edit")
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by integration-style tests
+# ---------------------------------------------------------------------------
+
+def _make_addon(api_key="test-key", cx="test-cx", max_results="10"):
+    """Return a minimal addon stub with preset settings."""
+    addon = unittest.mock.MagicMock()
+    addon.getSetting.side_effect = lambda key: {
+        "google_api_key": api_key,
+        "google_cx": cx,
+        "max_results": max_results,
+    }.get(key, "")
+    return addon
+
+
+# ---------------------------------------------------------------------------
+# Tests for find_movie error-path notifications
+# ---------------------------------------------------------------------------
+
+class TestFindMovieNotifications(unittest.TestCase):
+    """Verify that user-facing notifications are shown on API error paths."""
+
+    def setUp(self):
+        # Reset the shared dialog state before each test
+        _shared_dialog.last_notification = None
+
+    def test_missing_api_key_shows_notification(self):
+        scraper = FaneditScraper(_make_addon(api_key="", cx="test-cx"))
+        scraper.find_movie(handle=1, title="Star Wars")
+        self.assertIsNotNone(_shared_dialog.last_notification)
+        self.assertIn("not set", _shared_dialog.last_notification["message"])
+
+    def test_missing_cx_shows_notification(self):
+        scraper = FaneditScraper(_make_addon(api_key="test-key", cx=""))
+        scraper.find_movie(handle=1, title="Star Wars")
+        self.assertIsNotNone(_shared_dialog.last_notification)
+        self.assertIn("not set", _shared_dialog.last_notification["message"])
+
+    def test_http_error_shows_notification(self):
+        scraper = FaneditScraper(_make_addon())
+        http_exc = urllib.error.HTTPError(
+            url="https://example.com", code=403, msg="Forbidden",
+            hdrs=None, fp=io.BytesIO(b'{"error": {"message": "API key invalid"}}'),
+        )
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=http_exc):
+            scraper.find_movie(handle=1, title="Star Wars")
+        self.assertIsNotNone(_shared_dialog.last_notification)
+        msg = _shared_dialog.last_notification["message"]
+        self.assertIn("403", msg)
+
+    def test_url_error_shows_notification(self):
+        scraper = FaneditScraper(_make_addon())
+        url_exc = urllib.error.URLError(reason="Name or service not known")
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=url_exc):
+            scraper.find_movie(handle=1, title="Star Wars")
+        self.assertIsNotNone(_shared_dialog.last_notification)
+        msg = _shared_dialog.last_notification["message"]
+        self.assertIn("connection failed", msg.lower())
+
+    def test_notification_icon_is_error(self):
+        scraper = FaneditScraper(_make_addon(api_key="", cx=""))
+        scraper.find_movie(handle=1, title="Test")
+        self.assertEqual(_shared_dialog.last_notification["icon"], _xbmcgui.NOTIFICATION_ERROR)
+
+
+# ---------------------------------------------------------------------------
+# Tests for get_artwork
+# ---------------------------------------------------------------------------
+
+class TestGetArtwork(unittest.TestCase):
+    """Verify get_artwork dispatches correctly."""
+
+    _MINIMAL_HTML = """<!DOCTYPE html>
+<html><head>
+<title>Test Edit - Fanedit.org</title>
+<meta itemprop="image" content="https://example.com/poster.jpg">
+</head><body>
+<h1 class="contentheading"><span itemprop="headline">Test Edit</span></h1>
+</body></html>"""
+
+    def test_empty_id_calls_setResolvedUrl_false(self):
+        scraper = FaneditScraper(_make_addon())
+        calls = []
+        with unittest.mock.patch.object(_xbmcplugin, "setResolvedUrl",
+                                        side_effect=lambda h, s, li: calls.append(s)):
+            scraper.get_artwork(handle=1, fanedit_id="")
+        self.assertEqual(calls, [False])
+
+    def test_fetch_error_calls_setResolvedUrl_false(self):
+        scraper = FaneditScraper(_make_addon())
+        url_exc = urllib.error.URLError(reason="Connection refused")
+        calls = []
+        with unittest.mock.patch("urllib.request.urlopen", side_effect=url_exc):
+            with unittest.mock.patch.object(_xbmcplugin, "setResolvedUrl",
+                                            side_effect=lambda h, s, li: calls.append(s)):
+                scraper.get_artwork(handle=1, fanedit_id="test-edit")
+        self.assertEqual(calls, [False])
+
+    def test_successful_fetch_calls_setResolvedUrl_true(self):
+        scraper = FaneditScraper(_make_addon())
+        fake_response = unittest.mock.MagicMock()
+        fake_response.read.return_value = self._MINIMAL_HTML.encode("utf-8")
+        fake_response.__enter__ = lambda s: s
+        fake_response.__exit__ = unittest.mock.MagicMock(return_value=False)
+        calls = []
+        with unittest.mock.patch("urllib.request.urlopen", return_value=fake_response):
+            with unittest.mock.patch.object(_xbmcplugin, "setResolvedUrl",
+                                            side_effect=lambda h, s, li: calls.append(s)):
+                scraper.get_artwork(handle=1, fanedit_id="test-edit")
+        self.assertEqual(calls, [True])
+
+    def test_poster_added_as_artwork(self):
+        scraper = FaneditScraper(_make_addon())
+        fake_response = unittest.mock.MagicMock()
+        fake_response.read.return_value = self._MINIMAL_HTML.encode("utf-8")
+        fake_response.__enter__ = lambda s: s
+        fake_response.__exit__ = unittest.mock.MagicMock(return_value=False)
+        artwork_calls = []
+        original_add = _StubVideoInfoTag.addAvailableArtwork
+
+        def capture_artwork(self_tag, url, art_type):
+            artwork_calls.append((url, art_type))
+
+        with unittest.mock.patch.object(_StubVideoInfoTag, "addAvailableArtwork", capture_artwork):
+            with unittest.mock.patch("urllib.request.urlopen", return_value=fake_response):
+                with unittest.mock.patch.object(_xbmcplugin, "setResolvedUrl", lambda *a: None):
+                    scraper.get_artwork(handle=1, fanedit_id="test-edit")
+
+        self.assertTrue(any(art_type == "poster" for _, art_type in artwork_calls))
 
 
 if __name__ == "__main__":

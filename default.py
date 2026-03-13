@@ -11,6 +11,7 @@ Supported actions
 find        Search fanedit.org via Google Custom Search API and return candidate
             ListItems so the user can pick the correct fanedit.
 getdetails  Fetch and parse a single fanedit.org page identified by 'url'.
+getartwork  Fetch available artwork for a fanedit identified by its unique ID slug.
 nfourl      Extract a fanedit.org URL from NFO file content so Kodi can pass it
             to getdetails automatically.
 """
@@ -38,6 +39,8 @@ def run() -> None:
         scraper.get_details(handle, params.get("url", ""))
     elif action == "nfourl":
         scraper.nfo_url(handle, params.get("nfo", ""))
+    elif action == "getartwork":
+        scraper.get_artwork(handle, params.get("id", ""))
     else:
         xbmcplugin.endOfDirectory(handle, succeeded=False)
 

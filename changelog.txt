@@ -1,3 +1,8 @@
+v1.0.2
+- Add user-facing notification when Google API key/CX is missing or API call fails
+- Add getartwork action to support artwork fetching by unique ID
+- Minor: improve error logging with Google API response body detail
+
 v1.0.1
 - Fix settings page not appearing in Kodi 19+ (Matrix/Nexus/Omega)
 - Corrected the settings attribute in addon.xml from a file path to the required boolean value "true"
