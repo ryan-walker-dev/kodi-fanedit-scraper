@@ -30,6 +30,10 @@ ADDON_ID = "metadata.fanedit.org"
 FANEDIT_BASE_URL = "https://www.fanedit.org"
 FANEDIT_SEARCH_URL = "https://fanedit.org/fanedit-search/search-results/"
 
+# Number of characters to search backwards before a JReviews listing <input>
+# element when looking for a Synopsis field to use as the result snippet.
+_SYNOPSIS_SEARCH_WINDOW = 3000
+
 # Kodi log-level aliases (kept explicit for readability)
 _LOG_INFO = xbmc.LOGINFO
 _LOG_ERROR = xbmc.LOGERROR
@@ -337,12 +341,70 @@ class FaneditScraper:
         Parse the fanedit.org search results page and return a list of
         ``(url, title, thumbnail, snippet)`` tuples.
 
-        Supports the article-based WordPress layout as the primary strategy,
-        with a fallback that scans for result links inside list/div containers.
+        Supports three strategies in priority order:
+
+        1. JReviews listing ``<input>`` elements with ``data-listingurl``,
+           ``data-listingtitle``, and ``data-thumburl`` attributes (current
+           fanedit.org search layout).
+        2. WordPress ``<article>`` elements.
+        3. Result links inside ``<li>`` or ``<div class="result/item/entry">``
+           containers.
         """
         candidates = []
 
-        # Primary: WordPress article elements
+        # ------------------------------------------------------------------
+        # Strategy 1 – JReviews listing <input> elements with data-* attrs.
+        #
+        # Each result on fanedit.org carries a hidden <input> element like:
+        #   <input id="listing886"
+        #          data-listingurl="https://fanedit.org/cosmogony/"
+        #          data-thumburl="https://…/thumb.jpg"
+        #          data-listingtitle="Cosmogony" … />
+        # The "Synopsis:" field appears as inline text just before the input.
+        # The regex `[^>]*` safely captures all attributes across lines because
+        # `[^>]` matches any character other than `>`, including newlines.
+        # ------------------------------------------------------------------
+        for input_m in re.finditer(r'<input\b([^>]*)>', html, re.IGNORECASE):
+            attrs_text = input_m.group(1)
+            url_m = re.search(r'data-listingurl=["\']([^"\']+)["\']', attrs_text)
+            if not url_m:
+                continue
+            link = url_m.group(1).strip()
+            if not link.startswith("http"):
+                continue
+
+            title_m = re.search(r'data-listingtitle=["\']([^"\']+)["\']', attrs_text)
+            if not title_m:
+                continue
+            item_title = _clean_html(title_m.group(1))
+            item_title = re.sub(
+                r"\s*[|\-–]\s*(?:fanedit\.org|fan\s*edit\.org).*$",
+                "", item_title, flags=re.IGNORECASE,
+            ).strip()
+            if not item_title:
+                continue
+
+            thumb_m = re.search(r'data-thumburl=["\']([^"\']+)["\']', attrs_text)
+            thumbnail = thumb_m.group(1).strip() if thumb_m else ""
+
+            # Snippet: "Synopsis:" field appears inline just before the <input>
+            block_start = max(0, input_m.start() - _SYNOPSIS_SEARCH_WINDOW)
+            preceding = html[block_start:input_m.start()]
+            all_synopsis = list(re.finditer(r'Synopsis\s*:\s*', preceding, re.IGNORECASE))
+            if all_synopsis:
+                last_m = all_synopsis[-1]
+                snippet = _clean_html(preceding[last_m.end():])
+            else:
+                snippet = ""
+
+            candidates.append((link, item_title, thumbnail, snippet))
+
+        if candidates:
+            return candidates
+
+        # ------------------------------------------------------------------
+        # Strategy 2 – WordPress <article> elements
+        # ------------------------------------------------------------------
         articles = re.findall(
             r'<article[^>]*>(.*?)</article>',
             html, re.IGNORECASE | re.DOTALL,
@@ -393,38 +455,42 @@ class FaneditScraper:
 
             candidates.append((link, item_title, thumbnail, snippet))
 
-        # Fallback: result links in list/div containers
-        if not candidates:
-            for block_m in re.finditer(
-                r'<(?:li|div)[^>]+class="[^"]*(?:result|item|entry)[^"]*"[^>]*>(.*?)</(?:li|div)>',
-                html, re.IGNORECASE | re.DOTALL,
-            ):
-                block = block_m.group(1)
-                link_match = re.search(
-                    r'<a\s[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-                    block, re.IGNORECASE | re.DOTALL,
-                )
-                if not link_match:
-                    continue
-                link = link_match.group(1).strip()
-                if not link.startswith("http"):
-                    continue
-                item_title = _clean_html(link_match.group(2))
-                item_title = re.sub(
-                    r"\s*[|\-–]\s*(?:fanedit\.org|fan\s*edit\.org).*$",
-                    "", item_title, flags=re.IGNORECASE,
-                ).strip()
-                if not item_title or not link:
-                    continue
-                thumbnail = ""
-                img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', block, re.IGNORECASE)
-                if img_match:
-                    thumbnail = img_match.group(1).strip()
-                snippet = ""
-                p_match = re.search(r'<p[^>]*>(.*?)</p>', block, re.IGNORECASE | re.DOTALL)
-                if p_match:
-                    snippet = _clean_html(p_match.group(1))
-                candidates.append((link, item_title, thumbnail, snippet))
+        if candidates:
+            return candidates
+
+        # ------------------------------------------------------------------
+        # Strategy 3 – Fallback: result links in list/div containers
+        # ------------------------------------------------------------------
+        for block_m in re.finditer(
+            r'<(?:li|div)[^>]+class="[^"]*(?:result|item|entry)[^"]*"[^>]*>(.*?)</(?:li|div)>',
+            html, re.IGNORECASE | re.DOTALL,
+        ):
+            block = block_m.group(1)
+            link_match = re.search(
+                r'<a\s[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+                block, re.IGNORECASE | re.DOTALL,
+            )
+            if not link_match:
+                continue
+            link = link_match.group(1).strip()
+            if not link.startswith("http"):
+                continue
+            item_title = _clean_html(link_match.group(2))
+            item_title = re.sub(
+                r"\s*[|\-–]\s*(?:fanedit\.org|fan\s*edit\.org).*$",
+                "", item_title, flags=re.IGNORECASE,
+            ).strip()
+            if not item_title or not link:
+                continue
+            thumbnail = ""
+            img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', block, re.IGNORECASE)
+            if img_match:
+                thumbnail = img_match.group(1).strip()
+            snippet = ""
+            p_match = re.search(r'<p[^>]*>(.*?)</p>', block, re.IGNORECASE | re.DOTALL)
+            if p_match:
+                snippet = _clean_html(p_match.group(1))
+            candidates.append((link, item_title, thumbnail, snippet))
 
         return candidates
 
